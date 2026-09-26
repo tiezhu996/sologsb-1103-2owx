@@ -40,9 +40,10 @@ docker compose up -d --build    # 改动代码后重新构建
 | --- | --- | --- | --- |
 | `/sessions` | 场次编排 | 新建场次、上下调序、查看每场 Cue 数与过渡总时长、硬切衔接预警 | Session、Cue |
 | `/sessions/:id/fixtures` | 灯位通道配置台 | 通道号排布、按灯位分组折叠、重复通道号高亮、灯位负载校验 | Fixture、Session |
-| `/sessions/:id/cues` | Cue 编排时间轴 | 插入 / 复制 / 删除 Cue、拖拽调整先后、沿袭上一条参数、批量偏移过渡时间 | Cue、CueLevel |
+| `/sessions/:id/cues` | Cue 编排时间轴 | 插入 / 复制 / 删除 Cue、拖拽调整先后、沿袭上一条参数、批量偏移过渡时间、设定手动/跟随/挂起接续、逐条预计执行时刻与全场超时预警 | Cue、CueLevel |
+| `/sessions/:id/run` | 走场面板 | 从第一条高亮逐条走场；跟随 / 挂起到点自动推进，手动等待等人点 GO；对照预计时刻给出实走结束与超时秒数 | Cue、Session |
 | `/cues/:id/levels` | 通道电平编辑 | 逐通道设定亮度与色温、色温漂移检查、一键对齐基准色温 | CueLevel、Fixture |
-| `/sheets` | 排演表生成与导出 | 勾选 Cue 组表、本地留存历史、预览 / 复制 / 下载纯文本 | RehearsalSheet、Cue |
+| `/sheets` | 排演表生成与导出 | 勾选 Cue 组表、本地留存历史、预览 / 复制 / 下载纯文本（每条带接续方式与预计时刻） | RehearsalSheet、Cue |
 
 核心动作闭环：**建场次 → 配灯位通道 → 插入 Cue → 设定过渡与通道电平 → 导出排演表**。
 
@@ -90,10 +91,11 @@ sologsb-1103/
         │   └── useChannelConflict.ts # 重复通道号与灯位过载检测
         ├── pages/
         │   ├── SessionList.vue  FixtureBoard.vue  CueTimeline.vue
-        │   ├── LevelEditor.vue  SheetList.vue
+        │   ├── RunPanel.vue  LevelEditor.vue  SheetList.vue
         ├── router/index.ts
         └── utils/
             ├── fade.ts     # 过渡时间格式化、色温一致性判定、排演表纯文本拼装
+            ├── timeline.ts # 接续方式时间轴：逐条预计执行时刻、全场结束与超时秒数
             ├── db.ts       # IndexedDB（Dexie）封装：版本号与升级迁移
             ├── export.ts   # 文本下载、文件名生成、剪贴板复制
             ├── cueOrder.ts # Cue 编号解析、比较、排序与位次计算
@@ -105,7 +107,8 @@ sologsb-1103/
 
 - 所有数据存放在**浏览器本地 IndexedDB**，数据库名 `gbcuesheet`，由 `src/utils/db.ts` 用 Dexie 统一封装；页面不直接读写数据库，只调用 store 的 action。
 - 共 6 张表：`sessions`、`fixtures`、`cues`、`levels`、`sheets`、`appMeta`（元数据）。
-- **数据结构版本号**：`DB_VERSION = 2`。`version(1)` 定义初始结构；`version(2)` 新增 `updatedAt` / `sheetNo` 索引、`appMeta` 表，并在 `upgrade()` 中迁移既有数据（补齐 `updatedAt`、`orderIndex`、`holdSec`，规范化遗留排演表编号与条目快照）。
+- **数据结构版本号**：`DB_VERSION = 3`。`version(1)` 定义初始结构；`version(2)` 新增 `updatedAt` / `sheetNo` 索引、`appMeta` 表，并在 `upgrade()` 中迁移既有数据（补齐 `updatedAt`、`orderIndex`、`holdSec`，规范化遗留排演表编号与条目快照）；`version(3)` 为 Cue 增加接续方式 `followMode` / `followDelaySec`、为排演表条目快照增加预计时刻字段，老 Cue 一律按「手动等待」（`manual`）迁移。
+- **接续方式**：每条 Cue 可选 `manual`（手动等待，等人点 GO）、`follow`（跟随上一条，延迟 `followDelaySec` 秒自动接上）、`hang`（挂起，等上一条渐亮 + 保持 + 渐暗走完自动接上）；时间轴以场次计划开始时刻为零点逐条累计预计执行时刻，并与计划结束比较给出超出秒数（见 `src/utils/timeline.ts`）。
 - 删除场次会级联清理其灯位通道、Cue、通道电平与排演表；删除通道会清理对应的电平记录。
 - **容器无状态**：不使用数据库服务、不挂载命名卷；换浏览器或清理站点数据即等于清空。排演表以生成时刻的快照留档，之后修改 Cue 不影响历史记录。
 

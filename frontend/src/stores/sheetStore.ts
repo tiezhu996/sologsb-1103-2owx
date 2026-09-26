@@ -4,9 +4,11 @@ import type { RehearsalSheet, SheetChannelLine, SheetCueLine, SheetDraft } from 
 import { db } from '@/utils/db'
 import { createId } from '@/utils/id'
 import { sortFixturesByChannel } from '@/utils/patch'
+import { buildTimeline } from '@/utils/timeline'
 import { useCueStore } from '@/stores/cueStore'
 import { useFixtureStore } from '@/stores/fixtureStore'
 import { useLevelStore } from '@/stores/levelStore'
+import { useSessionStore } from '@/stores/sessionStore'
 
 function pad(value: number): string {
   return String(value).padStart(2, '0')
@@ -56,8 +58,15 @@ export const useSheetStore = defineStore('sheet', () => {
     const cueStore = useCueStore()
     const levelStore = useLevelStore()
     const fixtureStore = useFixtureStore()
+    const sessionStore = useSessionStore()
 
-    const ordered = cueStore.sortedCuesOfSession(draft.sessionId).filter((cue) => draft.cueIds.includes(cue.id))
+    // 时刻按全场 Cue 的时间轴计算（勾选不影响接续关系），再映射到被勾选的条目
+    const allOrdered = cueStore.sortedCuesOfSession(draft.sessionId)
+    const session = sessionStore.sessionById(draft.sessionId)
+    const timeline = buildTimeline(allOrdered, session?.plannedStart, session?.plannedEnd)
+    const timingByCueId = new Map(timeline.timings.map((timing) => [timing.cueId, timing]))
+
+    const ordered = allOrdered.filter((cue) => draft.cueIds.includes(cue.id))
     if (ordered.length === 0) return null
 
     const cueLines: SheetCueLine[] = ordered.map((cue) => {
@@ -77,14 +86,19 @@ export const useSheetStore = defineStore('sheet', () => {
         })
         .filter((line): line is SheetChannelLine => line !== null)
 
+      const timing = timingByCueId.get(cue.id)
       return {
         cueId: cue.id,
         cueNo: cue.cueNo,
         label: cue.label,
         trigger: cue.trigger,
+        followMode: cue.followMode,
+        followDelaySec: cue.followDelaySec,
         fadeInSec: cue.fadeInSec,
         fadeOutSec: cue.fadeOutSec,
         holdSec: cue.holdSec,
+        offsetSec: timing ? timing.offsetSec : null,
+        estimatedClock: timing && timeline.hasStart ? timing.clock : null,
         note: cue.note,
         channels
       }

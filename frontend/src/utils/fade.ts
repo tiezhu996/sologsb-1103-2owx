@@ -1,4 +1,5 @@
-import type { Cue, CueOrderSummary, AdjacentTransition } from '@/types/cue'
+import type { Cue, CueOrderSummary, AdjacentTransition, CueFollowMode } from '@/types/cue'
+import { CUE_FOLLOW_LABELS } from '@/types/cue'
 import type { FixturePosition } from '@/types/fixture'
 import type { ColorTempCheck, ColorTempItem } from '@/types/level'
 import { COLOR_TEMP_TOLERANCE_K } from '@/types/level'
@@ -141,11 +142,31 @@ export function checkColorTempConsistency(
   }
 }
 
+/** 接续方式的排演表描述 */
+export function formatFollowMode(mode: CueFollowMode, delaySec?: number): string {
+  if (mode === 'follow') return `${CUE_FOLLOW_LABELS.follow}（上一条后 ${formatSeconds(Math.max(0, delaySec ?? 0))}）`
+  if (mode === 'hang') return CUE_FOLLOW_LABELS.hang
+  return CUE_FOLLOW_LABELS.manual
+}
+
+/** 计划开始时刻 + 秒数偏移 → `HH:mm`（跨天追加 `+Nd`）；缺计划开始时返回偏移秒文本 */
+function formatClockAtOffset(plannedStart: string | undefined, offsetSec: number): string {
+  const match = plannedStart ? /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(plannedStart.trim()) : null
+  if (!match) return `+${formatSeconds(offsetSec)}`
+  const totalMinutes = Number(match[1]) * 60 + Number(match[2]) + Math.max(0, offsetSec) / 60
+  const day = Math.floor(totalMinutes / 1440)
+  const within = Math.round(totalMinutes - day * 1440)
+  const base = `${String(Math.floor(within / 60)).padStart(2, '0')}:${String(within % 60).padStart(2, '0')}`
+  return day > 0 ? `${base}+${day}d` : base
+}
+
 /** 把一条 Cue 快照渲染为多行文本 */
 function formatCueLineText(line: SheetCueLine, index: number): string[] {
   const total = round1(line.fadeInSec + line.holdSec + line.fadeOutSec)
   const rows: string[] = []
-  rows.push(`${String(index + 1).padStart(2, '0')}. ${line.cueNo}  ${line.label || '（无提示语）'}  [${line.trigger}]`)
+  const clockText = line.estimatedClock ? `  ⏱ ${line.estimatedClock}` : ''
+  rows.push(`${String(index + 1).padStart(2, '0')}. ${line.cueNo}  ${line.label || '（无提示语）'}  [${line.trigger}]${clockText}`)
+  rows.push(`    接续：${formatFollowMode(line.followMode, line.followDelaySec)}`)
   rows.push(`    过渡：渐亮 ${formatSeconds(line.fadeInSec)} / 保持 ${formatSeconds(line.holdSec)} / 渐暗 ${formatSeconds(
     line.fadeOutSec
   )}（合计 ${formatSeconds(total)}）`)
@@ -195,6 +216,24 @@ export function buildSheetText(sheet: RehearsalSheet, session?: Session): string
         totalFadeOut
       )}（总计 ${formatSeconds(round1(totalFadeIn + totalHold + totalFadeOut))}）`
     )
+
+    const lastLine = sheet.cueLines[sheet.cueLines.length - 1]
+    if (typeof lastLine.offsetSec === 'number') {
+      const finishOffset = round1(lastLine.offsetSec + lastLine.fadeInSec + lastLine.holdSec + lastLine.fadeOutSec)
+      if (lastLine.estimatedClock) {
+        lines.push(`预计结束：${formatClockAtOffset(session?.plannedStart, finishOffset)}（末条预计 ${lastLine.estimatedClock}）`)
+      } else {
+        lines.push(`预计结束：计划开始后 ${formatSeconds(finishOffset)}`)
+      }
+      if (session?.plannedStart && session.plannedEnd) {
+        const [sh, sm] = session.plannedStart.split(':').map(Number)
+        const [eh, em] = session.plannedEnd.split(':').map(Number)
+        let plannedSpan = eh * 60 + em - (sh * 60 + sm)
+        if (plannedSpan < 0) plannedSpan += 1440
+        const overSec = Math.max(0, round1(finishOffset - plannedSpan * 60))
+        lines.push(overSec > 0 ? `超时预警：预计超出计划结束 ${formatSeconds(overSec)}` : '计划核对：预计不晚于计划结束')
+      }
+    }
   }
 
   lines.push('')

@@ -66,6 +66,16 @@ const menuOptions = computed<MenuOption[]>(() => {
       disabled: !sessionId
     },
     {
+      label: () =>
+        h(
+          RouterLink,
+          { to: sessionId ? `/sessions/${sessionId}/run` : '/sessions' },
+          { default: () => '走场面板' }
+        ),
+      key: 'run',
+      disabled: !sessionId
+    },
+    {
       label: () => h(RouterLink, { to: '/sheets' }, { default: () => '排演表生成与导出' }),
       key: 'sheets'
     },
@@ -87,6 +97,7 @@ const menuOptions = computed<MenuOption[]>(() => {
 const activeKey = computed(() => {
   const path = route.path
   if (path.startsWith('/sheets')) return 'sheets'
+  if (path.includes('/run')) return 'run'
   if (path.includes('/fixtures')) return 'fixtures'
   if (path.includes('/cues') || path.includes('/levels')) return 'cues'
   return 'sessions'

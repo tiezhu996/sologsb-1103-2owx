@@ -20,6 +20,7 @@ import { useSheetStore } from '@/stores/sheetStore'
 import type { RehearsalSheet } from '@/types/sheet'
 import { buildSheetText, cueTotalSeconds, formatDateTime, formatSeconds } from '@/utils/fade'
 import { buildSheetFilename, copyText, downloadTextFile } from '@/utils/export'
+import { buildTimeline } from '@/utils/timeline'
 
 const router = useRouter()
 const message = useMessage()
@@ -40,6 +41,13 @@ const sessionOptions = computed(() =>
 
 const cues = computed(() => (selectedSessionId.value ? cueStore.sortedCuesOfSession(selectedSessionId.value) : []))
 const selectedCount = computed(() => cues.value.filter((cue) => cueStore.isSelected(cue.id)).length)
+
+/** 当前场次的预计执行时刻（用于勾选列表展示） */
+const cueTimingMap = computed(() => {
+  const session = sessionStore.sessionById(selectedSessionId.value)
+  if (!session) return new Map<string, { clock: string }>()
+  return new Map(buildTimeline(cues.value, session.plannedStart, session.plannedEnd).timings.map((item) => [item.cueId, item]))
+})
 
 const sheets = computed(() =>
   showAllSessions.value ? sheetStore.sheetsSorted : sheetStore.sheetsOfSession(selectedSessionId.value)
@@ -206,6 +214,7 @@ function goSessions(): void {
             <NCheckbox :checked="cueStore.isSelected(cue.id)" @update:checked="() => cueStore.toggleSelected(cue.id)" />
             <span class="cue-select__no mono">{{ cue.cueNo }}</span>
             <span class="cue-select__label">{{ cue.label || '（未填写提示语）' }}</span>
+            <NTag size="tiny" :bordered="false" type="warning">{{ cueTimingMap.get(cue.id)?.clock ?? '—' }}</NTag>
             <NTag size="tiny" :bordered="false">{{ cue.trigger }}</NTag>
             <span class="cue-select__duration mono">{{ formatSeconds(cueTotalSeconds(cue)) }}</span>
           </label>

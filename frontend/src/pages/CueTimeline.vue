@@ -21,9 +21,10 @@ import { useCueStore, type CuePatch, type FadeShiftScope } from '@/stores/cueSto
 import { useFixtureStore } from '@/stores/fixtureStore'
 import { useLevelStore } from '@/stores/levelStore'
 import { useSessionStore } from '@/stores/sessionStore'
-import { CUE_TRIGGERS, type Cue, type CueTrigger } from '@/types/cue'
+import { CUE_FOLLOW_LABELS, CUE_FOLLOW_MODES, CUE_TRIGGERS, type Cue, type CueFollowMode, type CueTrigger } from '@/types/cue'
 import type { FixturePosition } from '@/types/fixture'
 import { cueTotalSeconds, formatSeconds, formatTransition } from '@/utils/fade'
+import { buildTimeline, followGapText, type CueTiming } from '@/utils/timeline'
 import { isValidCueNo, normalizeCueNo } from '@/utils/cueOrder'
 
 const route = useRoute()
@@ -41,6 +42,7 @@ const session = computed(() => sessionStore.sessionById(sessionId.value))
 const { cues, summary, nextCueNo, hardCutCount, reorder } = useCueOrder(sessionId)
 
 const triggerOptions = CUE_TRIGGERS.map((trigger) => ({ label: trigger, value: trigger }))
+const followOptions = CUE_FOLLOW_MODES.map((mode) => ({ label: CUE_FOLLOW_LABELS[mode], value: mode }))
 const scopeOptions = [
   { label: '渐亮 + 渐暗', value: 'both' },
   { label: '仅渐亮', value: 'in' },
@@ -50,6 +52,16 @@ const scopeOptions = [
 const fixtures = computed(() => fixtureStore.sortedFixturesOfSession(sessionId.value))
 const cueNoList = computed(() => cues.value.map((cue) => cue.cueNo))
 const totalDuration = computed(() => summary.value.totalSec)
+
+/** 整场执行时间轴：从计划开始时刻累计的预计执行时刻 */
+const timeline = computed(() =>
+  session.value ? buildTimeline(cues.value, session.value.plannedStart, session.value.plannedEnd) : null
+)
+const timingByCueId = computed(() => new Map((timeline.value?.timings ?? []).map((item) => [item.cueId, item])))
+
+function timingOf(cue: Cue): CueTiming | undefined {
+  return timingByCueId.value.get(cue.id)
+}
 
 /** 通道芯片的展示数据 */
 interface CueChannelChip {
@@ -81,6 +93,8 @@ const createForm = reactive<{
   cueNo: string
   label: string
   trigger: CueTrigger
+  followMode: CueFollowMode
+  followDelaySec: number | null
   fadeInSec: number | null
   fadeOutSec: number | null
   holdSec: number | null
@@ -89,6 +103,8 @@ const createForm = reactive<{
   cueNo: '',
   label: '',
   trigger: '手动',
+  followMode: 'manual',
+  followDelaySec: 2,
   fadeInSec: 3,
   fadeOutSec: 3,
   holdSec: 5,
@@ -105,6 +121,8 @@ function openCreate(): void {
   createForm.cueNo = nextCueNo.value
   createForm.label = ''
   createForm.trigger = '手动'
+  createForm.followMode = 'manual'
+  createForm.followDelaySec = 2
   createForm.fadeInSec = 3
   createForm.fadeOutSec = 3
   createForm.holdSec = 5
@@ -118,6 +136,12 @@ function handleCreateTrigger(value: string | number | Array<string | number> | n
   }
 }
 
+function handleCreateFollow(value: string | number | Array<string | number> | null): void {
+  if (typeof value === 'string' && (CUE_FOLLOW_MODES as readonly string[]).includes(value)) {
+    createForm.followMode = value as CueFollowMode
+  }
+}
+
 async function submitCreate(): Promise<void> {
   if (createError.value) {
     message.error(createError.value)
@@ -128,6 +152,8 @@ async function submitCreate(): Promise<void> {
     cueNo: normalizeCueNo(createForm.cueNo),
     label: createForm.label.trim(),
     trigger: createForm.trigger,
+    followMode: createForm.followMode,
+    followDelaySec: Math.max(0, createForm.followDelaySec ?? 0),
     fadeInSec: createForm.fadeInSec ?? 0,
     fadeOutSec: createForm.fadeOutSec ?? 0,
     holdSec: createForm.holdSec ?? 0,
@@ -206,6 +232,18 @@ async function commitTrigger(cue: Cue, value: string | number | Array<string | n
   if (typeof value !== 'string' || !(CUE_TRIGGERS as readonly string[]).includes(value)) return
   if (value === cue.trigger) return
   await cueStore.updateCue(cue.id, { trigger: value as CueTrigger })
+}
+
+async function commitFollowMode(cue: Cue, value: string | number | Array<string | number> | null): Promise<void> {
+  if (typeof value !== 'string' || !(CUE_FOLLOW_MODES as readonly string[]).includes(value)) return
+  if (value === cue.followMode) return
+  await cueStore.updateCue(cue.id, { followMode: value as CueFollowMode })
+}
+
+async function commitFollowDelay(cue: Cue, value: number | null): Promise<void> {
+  const next = Math.max(0, value ?? 0)
+  if (next === cue.followDelaySec) return
+  await cueStore.updateCue(cue.id, { followDelaySec: next })
 }
 
 async function commitCueNo(cue: Cue, value: string): Promise<void> {
@@ -305,6 +343,16 @@ function goSheets(): void {
   void router.push('/sheets')
 }
 
+function goRunPanel(): void {
+  void router.push(`/sessions/${sessionId.value}/run`)
+}
+
+/** 接续说明：第一条为场次开始，之后描述与上一条的衔接 */
+function followTextOf(cue: Cue, index: number): string {
+  if (index === 0) return '场次开始'
+  return followGapText(cue, cues.value[index - 1])
+}
+
 function durationOf(cue: Cue): string {
   return formatSeconds(cueTotalSeconds(cue))
 }
@@ -333,6 +381,7 @@ function channelFilterDuplicate(fixtureId: string): boolean {
       <div class="page__actions">
         <NButton @click="goFixtures">灯位通道</NButton>
         <NButton @click="goSheets">排演表</NButton>
+        <NButton type="primary" ghost :disabled="!session || cues.length === 0" @click="goRunPanel">走场面板</NButton>
         <NButton @click="showShift = true">批量偏移过渡</NButton>
         <NButton @click="sortByCueNo">按 Cue 号重排</NButton>
         <NButton type="primary" :disabled="!session" @click="openCreate">插入 Cue</NButton>
@@ -397,6 +446,39 @@ function channelFilterDuplicate(fixtureId: string): boolean {
         </div>
       </section>
 
+      <section v-if="cues.length > 0 && timeline" class="panel timeline-panel">
+        <h2 class="panel__title">
+          执行时刻预估<span class="panel__title-tag">从计划开始 {{ session?.plannedStart || '未填写' }} 累计</span>
+        </h2>
+        <div v-if="!session?.plannedStart" class="timeline-warn">
+          场次尚未填写计划开始时刻，下列为相对场次开始的偏移时刻；补全计划时刻后自动换算为钟点。
+        </div>
+        <div class="stat-row">
+          <div class="stat">
+            <span class="stat__value mono">{{ timeline.finishClock ?? '—' }}</span>
+            <span class="stat__label">全场预计结束</span>
+          </div>
+          <div class="stat">
+            <span class="stat__value mono">{{ formatSeconds(timeline.finishOffsetSec) }}</span>
+            <span class="stat__label">开始后总时长</span>
+          </div>
+          <div class="stat" v-if="session?.plannedEnd">
+            <span class="stat__value mono" :class="{ 'stat__value--over': timeline.overrun }">
+              {{ session.plannedEnd }}
+            </span>
+            <span class="stat__label">计划结束</span>
+          </div>
+          <div v-if="timeline.overrun" class="stat stat--over">
+            <span class="stat__value mono">+{{ formatSeconds(timeline.overrunSec) }}</span>
+            <span class="stat__label">超出计划</span>
+          </div>
+        </div>
+        <p v-if="timeline.overrun" class="timeline-overrun">
+          预计晚于计划结束 {{ formatSeconds(timeline.overrunSec) }}，请压缩过渡或调整接续。
+        </p>
+        <p v-else-if="session?.plannedEnd" class="timeline-ok">预计可在计划结束前完成。</p>
+      </section>
+
       <p v-if="cues.length === 0" class="empty-line">
         还没有 Cue。点击右上角「插入 Cue」开始编排，编号支持 Q12.5 形式。
       </p>
@@ -443,6 +525,31 @@ function channelFilterDuplicate(fixtureId: string): boolean {
                 style="width: 118px"
                 @update:value="(value) => commitTrigger(cue, value)"
               />
+              <div class="follow-edit">
+                <NSelect
+                  :value="cue.followMode"
+                  :options="followOptions"
+                  size="small"
+                  style="width: 110px"
+                  :disabled="index === 0"
+                  @update:value="(value) => commitFollowMode(cue, value)"
+                />
+                <NInputNumber
+                  v-if="cue.followMode === 'follow'"
+                  :value="cue.followDelaySec"
+                  size="small"
+                  :min="0"
+                  :step="0.5"
+                  :show-button="false"
+                  style="width: 78px"
+                  @update:value="(value) => commitFollowDelay(cue, value)"
+                />
+                <span v-if="cue.followMode === 'follow'" class="follow-edit__unit">秒后</span>
+                <span v-else-if="index === 0" class="follow-edit__hint">首场起点</span>
+              </div>
+              <span v-if="timingOf(cue)" class="cue-row__clock mono" title="预计执行时刻">
+                ⏱ {{ timingOf(cue)?.clock }}
+              </span>
               <NButton size="tiny" type="primary" ghost @click="goLevels(cue.id)">
                 电平编辑（{{ levelStore.levelsOfCue(cue.id).length }}）
               </NButton>
@@ -526,7 +633,10 @@ function channelFilterDuplicate(fixtureId: string): boolean {
               />
             </div>
 
-            <p class="cue-row__transition mono">{{ transitionOf(cue) }}</p>
+            <p class="cue-row__transition mono">
+              <span class="cue-row__follow">{{ followTextOf(cue, index) }}</span>
+              <span class="cue-row__transition-sep">·</span>{{ transitionOf(cue) }}
+            </p>
           </div>
 
           <div class="cue-row__actions">
@@ -556,6 +666,29 @@ function channelFilterDuplicate(fixtureId: string): boolean {
         </NFormItem>
         <NFormItem label="触发方式">
           <NSelect :value="createForm.trigger" :options="triggerOptions" @update:value="handleCreateTrigger" />
+        </NFormItem>
+        <NFormItem label="接续方式">
+          <div class="create-form__row">
+            <NSelect
+              :value="createForm.followMode"
+              :options="followOptions"
+              style="width: 180px"
+              @update:value="handleCreateFollow"
+            />
+            <template v-if="createForm.followMode === 'follow'">
+              <NInputNumber
+                v-model:value="createForm.followDelaySec"
+                :min="0"
+                :step="0.5"
+                :show-button="false"
+                style="width: 120px"
+              />
+              <span class="create-form__hint">秒后接上</span>
+            </template>
+            <span v-else class="create-form__hint">
+              {{ createForm.followMode === 'hang' ? '上一条渐暗结束自动接上' : '等人点 GO 后执行' }}
+            </span>
+          </div>
         </NFormItem>
         <NFormItem label="过渡时间">
           <div class="create-form__triple">
@@ -737,6 +870,66 @@ function channelFilterDuplicate(fixtureId: string): boolean {
 .cue-row__total {
   font-size: 13px;
   color: #f2b544;
+}
+
+.follow-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.follow-edit__unit,
+.follow-edit__hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.45);
+  white-space: nowrap;
+}
+
+.cue-row__clock {
+  font-size: 13px;
+  color: #7fd4c1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.cue-row__follow {
+  color: rgba(242, 181, 68, 0.85);
+}
+
+.cue-row__transition-sep {
+  margin: 0 8px;
+  color: rgba(255, 255, 255, 0.2);
+}
+
+.timeline-panel {
+  border-color: rgba(127, 212, 193, 0.22);
+}
+
+.timeline-warn {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 12px;
+  color: #f2d59a;
+  background: rgba(242, 181, 68, 0.08);
+  border: 1px solid rgba(242, 181, 68, 0.22);
+}
+
+.timeline-overrun {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: #ff9a9a;
+}
+
+.timeline-ok {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: rgba(127, 212, 193, 0.85);
+}
+
+.stat--over .stat__value,
+.stat__value--over {
+  color: #ff8f8f;
 }
 
 .cue-row__foot {

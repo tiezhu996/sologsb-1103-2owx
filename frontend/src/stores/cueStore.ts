@@ -67,6 +67,8 @@ export const useCueStore = defineStore('cue', () => {
       cueNo: draft.cueNo,
       label: draft.label,
       trigger: draft.trigger,
+      followMode: draft.followMode,
+      followDelaySec: draft.followDelaySec,
       fadeInSec: draft.fadeInSec,
       fadeOutSec: draft.fadeOutSec,
       holdSec: draft.holdSec,
@@ -126,6 +128,8 @@ export const useCueStore = defineStore('cue', () => {
       cueNo: suggestNextCueNo(cuesOfSession(source.sessionId).map((cue) => cue.cueNo)),
       label: `${source.label || 'Cue'}（副本）`,
       trigger: source.trigger,
+      followMode: source.followMode,
+      followDelaySec: source.followDelaySec,
       fadeInSec: source.fadeInSec,
       fadeOutSec: source.fadeOutSec,
       holdSec: source.holdSec,
@@ -151,6 +155,8 @@ export const useCueStore = defineStore('cue', () => {
     const previous = ordered[index - 1]
     await updateCue(id, {
       trigger: previous.trigger,
+      followMode: previous.followMode,
+      followDelaySec: previous.followDelaySec,
       fadeInSec: previous.fadeInSec,
       fadeOutSec: previous.fadeOutSec,
       holdSec: previous.holdSec

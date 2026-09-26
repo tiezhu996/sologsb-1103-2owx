@@ -24,6 +24,12 @@ const routes: RouteRecordRaw[] = [
     meta: { title: 'Cue 编排时间轴' }
   },
   {
+    path: '/sessions/:id/run',
+    name: 'run-panel',
+    component: () => import('@/pages/RunPanel.vue'),
+    meta: { title: '走场面板' }
+  },
+  {
     path: '/cues/:id/levels',
     name: 'level-editor',
     component: () => import('@/pages/LevelEditor.vue'),
