@@ -2,6 +2,10 @@
 export const CUE_TRIGGERS = ['手动', '跟音乐', '跟台词'] as const
 export type CueTrigger = (typeof CUE_TRIGGERS)[number]
 
+/** Cue 接续方式：手动等待 / 跟随上一条 / 挂起等渐暗 */
+export const CUE_FOLLOW_MODES = ['手动等待', '跟随', '挂起'] as const
+export type CueFollowMode = (typeof CUE_FOLLOW_MODES)[number]
+
 /** Cue 提示点：一次灯光状态变更的指令 */
 export interface Cue {
   /** 主键 */
@@ -14,6 +18,10 @@ export interface Cue {
   label: string
   /** 触发方式 */
   trigger: CueTrigger
+  /** 接续方式：手动等待 / 跟随 / 挂起（老数据按手动等待估算） */
+  followMode: CueFollowMode
+  /** 跟随延迟（秒），仅 followMode 为「跟随」时生效 */
+  followDelaySec: number
   /** 渐亮时长（秒） */
   fadeInSec: number
   /** 渐暗时长（秒） */
@@ -63,6 +71,8 @@ export function createEmptyCueDraft(sessionId: string, cueNo: string): CueDraft 
     cueNo,
     label: '',
     trigger: '手动',
+    followMode: '手动等待',
+    followDelaySec: 3,
     fadeInSec: 3,
     fadeOutSec: 3,
     holdSec: 5,

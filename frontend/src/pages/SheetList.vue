@@ -20,6 +20,7 @@ import { useSheetStore } from '@/stores/sheetStore'
 import type { RehearsalSheet } from '@/types/sheet'
 import { buildSheetText, cueTotalSeconds, formatDateTime, formatSeconds } from '@/utils/fade'
 import { buildSheetFilename, copyText, downloadTextFile } from '@/utils/export'
+import { offsetToClock, scheduleTimeline } from '@/utils/schedule'
 
 const router = useRouter()
 const message = useMessage()
@@ -40,6 +41,16 @@ const sessionOptions = computed(() =>
 
 const cues = computed(() => (selectedSessionId.value ? cueStore.sortedCuesOfSession(selectedSessionId.value) : []))
 const selectedCount = computed(() => cues.value.filter((cue) => cueStore.isSelected(cue.id)).length)
+
+/** 与 cues 顺序对齐的逐条执行偏移（按全场时间轴估算） */
+const scheduleEntries = computed(() => scheduleTimeline(cues.value))
+const plannedStart = computed(() => sessionStore.sessionById(selectedSessionId.value)?.plannedStart ?? '')
+
+function estTimeOf(index: number): string {
+  const entry = scheduleEntries.value[index]
+  if (!entry) return '—'
+  return offsetToClock(plannedStart.value, entry.offsetSec) ?? '—'
+}
 
 const sheets = computed(() =>
   showAllSessions.value ? sheetStore.sheetsSorted : sheetStore.sheetsOfSession(selectedSessionId.value)
@@ -198,7 +209,7 @@ function goSessions(): void {
 
         <div v-else class="cue-select-list">
           <label
-            v-for="cue in cues"
+            v-for="(cue, index) in cues"
             :key="cue.id"
             class="cue-select"
             :class="{ 'cue-select--checked': cueStore.isSelected(cue.id) }"
@@ -207,6 +218,7 @@ function goSessions(): void {
             <span class="cue-select__no mono">{{ cue.cueNo }}</span>
             <span class="cue-select__label">{{ cue.label || '（未填写提示语）' }}</span>
             <NTag size="tiny" :bordered="false">{{ cue.trigger }}</NTag>
+            <span class="cue-select__est mono">预计 {{ estTimeOf(index) }}</span>
             <span class="cue-select__duration mono">{{ formatSeconds(cueTotalSeconds(cue)) }}</span>
           </label>
         </div>
@@ -341,6 +353,12 @@ function goSessions(): void {
 .cue-select__duration {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.5);
+}
+
+.cue-select__est {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  white-space: nowrap;
 }
 
 .sheet-generate {

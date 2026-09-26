@@ -4,9 +4,11 @@ import type { RehearsalSheet, SheetChannelLine, SheetCueLine, SheetDraft } from 
 import { db } from '@/utils/db'
 import { createId } from '@/utils/id'
 import { sortFixturesByChannel } from '@/utils/patch'
+import { offsetToClock, scheduleCues } from '@/utils/schedule'
 import { useCueStore } from '@/stores/cueStore'
 import { useFixtureStore } from '@/stores/fixtureStore'
 import { useLevelStore } from '@/stores/levelStore'
+import { useSessionStore } from '@/stores/sessionStore'
 
 function pad(value: number): string {
   return String(value).padStart(2, '0')
@@ -56,9 +58,19 @@ export const useSheetStore = defineStore('sheet', () => {
     const cueStore = useCueStore()
     const levelStore = useLevelStore()
     const fixtureStore = useFixtureStore()
+    const sessionStore = useSessionStore()
 
     const ordered = cueStore.sortedCuesOfSession(draft.sessionId).filter((cue) => draft.cueIds.includes(cue.id))
     if (ordered.length === 0) return null
+
+    // 时刻按全场完整时间轴估算（勾选的子集共享同一条时间轴），再盖到各条目上
+    const plannedStart = sessionStore.sessionById(draft.sessionId)?.plannedStart ?? ''
+    const estTimeByCueId = new Map(
+      scheduleCues(cueStore.cuesOfSession(draft.sessionId)).map((item) => [
+        item.cueId,
+        offsetToClock(plannedStart, item.offsetSec)
+      ])
+    )
 
     const cueLines: SheetCueLine[] = ordered.map((cue) => {
       const channels: SheetChannelLine[] = sortFixturesByChannel(fixtureStore.fixturesOfSession(draft.sessionId))
@@ -82,6 +94,9 @@ export const useSheetStore = defineStore('sheet', () => {
         cueNo: cue.cueNo,
         label: cue.label,
         trigger: cue.trigger,
+        followMode: cue.followMode ?? '手动等待',
+        followDelaySec: cue.followDelaySec ?? 0,
+        estTime: estTimeByCueId.get(cue.id) ?? undefined,
         fadeInSec: cue.fadeInSec,
         fadeOutSec: cue.fadeOutSec,
         holdSec: cue.holdSec,

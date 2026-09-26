@@ -5,6 +5,7 @@ import { COLOR_TEMP_TOLERANCE_K } from '@/types/level'
 import type { RehearsalSheet, SheetCueLine } from '@/types/sheet'
 import type { Session } from '@/types/session'
 import { sortCues } from '@/utils/cueOrder'
+import { clockToSeconds, formatFollowMode, scheduleTimeline, secondsToClock } from '@/utils/schedule'
 
 /** 过渡比例：渐亮 / 保持 / 渐暗 各占的比例（0-1） */
 export interface FadeRatio {
@@ -142,10 +143,14 @@ export function checkColorTempConsistency(
 }
 
 /** 把一条 Cue 快照渲染为多行文本 */
-function formatCueLineText(line: SheetCueLine, index: number): string[] {
+function formatCueLineText(line: SheetCueLine, index: number, estTime: string | null): string[] {
   const total = round1(line.fadeInSec + line.holdSec + line.fadeOutSec)
   const rows: string[] = []
-  rows.push(`${String(index + 1).padStart(2, '0')}. ${line.cueNo}  ${line.label || '（无提示语）'}  [${line.trigger}]`)
+  rows.push(
+    `${String(index + 1).padStart(2, '0')}. ${line.cueNo}  ${line.label || '（无提示语）'}  [${line.trigger}]` +
+      (estTime ? `  预计 ${estTime}` : '')
+  )
+  rows.push(`    接续：${formatFollowMode(line)}`)
   rows.push(`    过渡：渐亮 ${formatSeconds(line.fadeInSec)} / 保持 ${formatSeconds(line.holdSec)} / 渐暗 ${formatSeconds(
     line.fadeOutSec
   )}（合计 ${formatSeconds(total)}）`)
@@ -186,8 +191,14 @@ export function buildSheetText(sheet: RehearsalSheet, session?: Session): string
     const totalFadeIn = round1(cueLike.reduce((sum, cue) => sum + cue.fadeInSec, 0))
     const totalHold = round1(cueLike.reduce((sum, cue) => sum + cue.holdSec, 0))
     const totalFadeOut = round1(cueLike.reduce((sum, cue) => sum + cue.fadeOutSec, 0))
+    // 老表条目没有 estTime 时，按条目快照（缺省手动等待）从计划开始时刻现场估算
+    const plannedStartSec = session ? clockToSeconds(session.plannedStart) : null
+    const fallbackSchedule = scheduleTimeline(sheet.cueLines)
     sheet.cueLines.forEach((line, index) => {
-      lines.push(...formatCueLineText(line, index))
+      const estTime =
+        line.estTime ??
+        (plannedStartSec !== null ? secondsToClock(plannedStartSec + (fallbackSchedule[index]?.offsetSec ?? 0)) : null)
+      lines.push(...formatCueLineText(line, index, estTime))
     })
     lines.push('')
     lines.push(

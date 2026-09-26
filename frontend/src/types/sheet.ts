@@ -1,5 +1,5 @@
 import type { FixturePosition, FixtureType } from '@/types/fixture'
-import type { CueTrigger } from '@/types/cue'
+import type { CueFollowMode, CueTrigger } from '@/types/cue'
 
 /** 排演表中的一行通道明细（生成时快照，便于历史留档） */
 export interface SheetChannelLine {
@@ -18,6 +18,12 @@ export interface SheetCueLine {
   cueNo: string
   label: string
   trigger: CueTrigger
+  /** 接续方式（生成时快照；老表没有此字段，按手动等待估算） */
+  followMode?: CueFollowMode
+  /** 跟随延迟秒数（生成时快照） */
+  followDelaySec?: number
+  /** 生成时按全场时间轴估算的预计执行时刻 `HH:mm:ss`；老表没有此字段 */
+  estTime?: string
   fadeInSec: number
   fadeOutSec: number
   holdSec: number
